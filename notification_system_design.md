@@ -127,3 +127,28 @@ SELECT DISTINCT student_id
 FROM notifications 
 WHERE notificationType = 'Placement' 
   AND createdAt >= NOW() - INTERVAL 7 DAY;
+
+  ## Stage 4: Performance Optimization & Caching
+
+### Problem Analysis
+Fetching notifications directly from the primary database on every single page load for 50,000+ students creates an unsustainable number of read operations (I/O bottlenecks) and database connection overhead. To solve this, we must shift the load away from the primary database using caching and optimized client-server communication.
+
+### Proposed Solutions & Trade-offs
+
+#### 1. Implementation of a Distributed Cache (Redis)
+**Strategy:** Introduce an in-memory data store like Redis between the backend API and the MongoDB database. When a student requests their notifications, the API first checks Redis. If a cached version exists, it returns immediately (cache hit). If not, it queries MongoDB, returns the data, and stores a copy in Redis (cache miss).
+* **Trade-offs:**
+    * *Pros:* Blazing fast sub-millisecond read times. Drastically reduces the CPU and I/O load on the primary MongoDB database.
+    * *Cons:* Increases infrastructure complexity and cost. Requires strict **Cache Invalidation** logic (the cache must be updated or purged the exact moment a student reads a notification or a new one is broadcasted, otherwise they will see stale data).
+
+#### 2. Client-Side State Management & SSE (Single-Fetch Paradigm)
+**Strategy:** The current issue stems from a poor frontend architectural pattern (fetching on *every* page load). Instead, the frontend (e.g., React context or Redux) should fetch the initial notification payload exactly *once* upon the user's first login session. From there, it relies entirely on the **Server-Sent Events (SSE)** channel we designed in Stage 1 to receive new notifications in real-time and append them to the local client state.
+* **Trade-offs:**
+    * *Pros:* Eliminates 99% of API GET requests. Reduces server costs significantly.
+    * *Cons:* Requires the frontend team to build more complex state management and robust auto-reconnect logic for dropped SSE connections. Increased memory usage on the user's browser.
+
+#### 3. Cursor-Based Pagination
+**Strategy:** Instead of returning a massive payload of a student's entire notification history, the API should only return the top 15 most recent notifications. If the user wants to see older alerts, they click a "Load More" button which fetches the next batch using a cursor (e.g., the `_id` of the last notification).
+* **Trade-offs:**
+    * *Pros:* Keeps network payload sizes extremely small. Reduces memory usage on both the server and the client.
+    * *Cons:* Introduces slight UX friction, as users cannot infinitely scroll without triggering a new network request. Requires slightly more complex backend querying logic.
