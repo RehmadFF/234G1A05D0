@@ -205,3 +205,18 @@ function process_push_notification_queue(job):
     catch (error):
         log_error(error)
         job.retry(max_attempts = 3, backoff = exponential)
+
+## Stage 6: Priority Inbox Implementation
+
+### 1. Priority Sorting Logic
+[cite_start]The product requirement dictates that notifications must be sorted by a combined factor of category weight and recency[cite: 559, 560]. 
+* **Weighting:** `Placement (3) > Result (2) > Event (1)`
+* [cite_start]**Tie-Breaker:** If two notifications share the same weight (e.g., two Placement alerts), the one with the most recent `Timestamp` takes precedence.
+
+### 2. Efficiently Maintaining the Top 10 (Algorithmic Approach)
+Sorting the entire database every time a new notification arrives is an $O(N \log N)$ operation, which is highly inefficient for a real-time system.
+
+To maintain the top 10 efficiently as new notifications stream in, we should use a **Min-Heap (Priority Queue) of size $k$** (where $k=10$).
+* **Mechanism:** The heap stores exactly 10 notifications. The root of the min-heap always holds the *lowest* priority item among the top 10.
+* **Insertion:** When a new notification arrives, we compare its priority to the root. If it is lower, we discard it. If it is higher, we pop the root and insert the new notification. 
+* **Complexity:** This reduces the time complexity of processing a new notification from $O(N \log N)$ to **$O(\log k)$**. Since $k$ is a constant (10), the operation is essentially **$O(1)$**, making it infinitely scalable.
