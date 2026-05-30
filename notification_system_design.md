@@ -152,3 +152,56 @@ Fetching notifications directly from the primary database on every single page l
 * **Trade-offs:**
     * *Pros:* Keeps network payload sizes extremely small. Reduces memory usage on both the server and the client.
     * *Cons:* Introduces slight UX friction, as users cannot infinitely scroll without triggering a new network request. Requires slightly more complex backend querying logic.
+
+## Stage 5: Reliability & Message Queues
+
+### 1. Shortcomings of the Current Implementation
+The provided pseudocode has critical architectural flaws for a system at scale:
+* **Synchronous Blocking:** Iterating through 50,000 users synchronously blocks the main execution thread. In single-threaded environments like Node.js, this will crash the server or freeze it for other requests.
+* **Lack of Fault Tolerance:** Since there is no `try/catch` or error boundary, when the `send_email` API call fails for the 200th student, the entire loop crashes. The remaining 49,800 students will never receive their DB update, email, or in-app push notification.
+* **No Retry Mechanism:** Transient network errors with a third-party email provider (like SendGrid or AWS SES) will permanently drop the notification without a way to retry the failed delivery.
+
+### 2. Redesigning for Reliability and Speed
+To make this process robust and lightning-fast, we must move from a **Synchronous Loop** to an **Asynchronous Event-Driven Architecture using Message Queues** (such as RabbitMQ, Kafka, or BullMQ). 
+
+Instead of doing the heavy lifting immediately, the API should quickly accept the request, perform a bulk database insert, and then offload the slow email/push tasks to background worker queues.
+
+### 3. Decoupling DB Saves and Email Dispatches
+**Should they happen together?** Absolutely not. 
+* **Database inserts** are internal, highly predictable, and extremely fast (especially if batched).
+* **Sending emails** relies on external third-party network calls, which are inherently slow, unpredictable, and subject to rate limits. 
+Tying them together tightly means an external network failure compromises internal data integrity. They must be decoupled.
+
+### 4. Revised Pseudocode
+
+```javascript
+// --- PRODUCER (Main API Handler) ---
+function notify_all(student_ids: array, message: string):
+    // 1. Perform a single BULK insert to the DB for all 50k users (Extremely fast)
+    bulk_save_to_db(student_ids, message)
+    
+    // 2. Offload external tasks to background message queues
+    for student_id in student_ids:
+        // Push payload to queues instead of executing immediately
+        email_queue.add_job({ student_id, message })
+        push_notification_queue.add_job({ student_id, message })
+        
+    return "Notifications are processing in the background"
+
+// --- CONSUMER WORKERS (Running independently in the background) ---
+
+// Worker for processing emails with automatic retries
+function process_email_queue(job):
+    try:
+        send_email(job.student_id, job.message)
+    catch (error):
+        log_error(error)
+        job.retry(max_attempts = 3, backoff = exponential)
+
+// Worker for processing in-app real-time pushes
+function process_push_notification_queue(job):
+    try:
+        push_to_app(job.student_id, job.message)
+    catch (error):
+        log_error(error)
+        job.retry(max_attempts = 3, backoff = exponential)
