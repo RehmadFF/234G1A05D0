@@ -77,3 +77,24 @@ To support immediate, low-overhead delivery of updates (Placements, Events, Resu
     Cache-Control: no-cache
     Connection: keep-alive
     ```
+
+## Stage 2: Database Design & Persistence
+
+### 1. Database Selection & Justification
+For the notification microservice, I suggest using **MongoDB (NoSQL)**. 
+* **Justification:** Notification systems are write-heavy and demand high throughput. MongoDB is good at rapid, high-volume write operations. Furthermore, the document-based model provides schema flexibility, which is highly beneficial if notification payloads (Events, Results, Placements) require custom metadata fields in the future without needing expensive database migrations.
+
+### 2. Database Schema (NoSQL Document Structure)
+We will maintain a `Notifications` collection. 
+
+```json
+// Collection: Notifications
+{
+  "_id": "ObjectId",
+  "studentId": "String (Indexed)",
+  "type": "String (Enum: 'Event', 'Result', 'Placement')",
+  "message": "String",
+  "isRead": "Boolean (Default: false)",
+  "createdAt": "ISODate",
+  "metadata": "Object (Optional)"
+}
